@@ -44,6 +44,17 @@ test('Relay admin pages emit syntactically valid browser JavaScript',()=>{
   assert.match(dashboard,/Copy URL/);
   assert.match(dashboard,/Copy Code/);
   assert.match(dashboard,/Copy ID/);
+  assert.match(dashboard,/Agent Session Approvals/);
+  assert.match(dashboard,/Grant duration \(hours, 1/);
+  assert.match(dashboard,/max='720'/);
+  assert.match(dashboard,/idleSelect/);
+  assert.doesNotMatch(dashboard,/Requested '\+session\.requestedHours/);
+  assert.match(dashboard,/Revoke Session/);
+  assert.match(dashboard,/const idleRelevant=/);
+  assert.match(dashboard,/Expires:/);
+  assert.doesNotMatch(dashboard,/confirm\('Approve this AI session/);
+  assert.match(dashboard,/remoteLock.textContent=window\.uiT\('remoteLock'\)/);
+  assert.match(dashboard,/remoteLockScopeHint/);
 });
 
 test('Worker origins require HTTPS except explicit loopback development origins',()=>{
@@ -1096,7 +1107,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     )
   );
 
-  assert.equal(tools.tools.length,26);
+  assert.equal(tools.tools.length,28);
 
   assert.ok(
     tools.tools.some(
@@ -1190,8 +1201,131 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   assert.equal(remoteAdminLogin.status,200);
   const remoteAdminCookie=(remoteAdminLogin.headers.get('set-cookie')||'').split(';')[0];
 
+  // A per-AI approval is an alternative to GLOBAL remote unlock.
+  // Sensitive remote reads and writes must fail before approval.
+  const lockedRead:any=await zoneClient.callTool({
+    name:'read_file',
+    arguments:{device:'Zone Worker',path:'a-private-file.txt'}
+  });
+  assert.equal(lockedRead.isError,true,'Unapproved Zone URL must not read files');
+  const sessionRequest:any=await zoneClient.callTool({
+    name:'request_agent_session',
+    arguments:{scope:'devices',
+      devices:[registered.deviceId],tools:['write_file','read_file'],note:'Test independent working session'}
+  });
+  assert.equal(sessionRequest.isError,undefined);
+  const pendingSession=JSON.parse(sessionRequest.content[0].text);
+  assert.equal(pendingSession.state,'pending');
+  assert.ok(pendingSession.agentSessionToken);
+  const pendingWrite:any=await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'still-locked.txt',content:'denied',
+      agentSessionToken:pendingSession.agentSessionToken}
+  });
+  assert.equal(pendingWrite.isError,true);
+  assert.equal((await fetch(origin+'/api/admin/agent-sessions')).status,401);
+  const pendingList=await fetch(origin+'/api/admin/agent-sessions',{
+    headers:{Cookie:remoteAdminCookie}
+  });
+  assert.equal(pendingList.status,200);
+  const sessions:any=await pendingList.json();
+  assert.equal(sessions.sessions[0].state,'pending');
+  assert.ok(!JSON.stringify(sessions).includes(pendingSession.agentSessionToken));
+  const approveSession=await fetch(
+    origin+'/api/admin/agent-sessions/'+pendingSession.sessionId+'/approve',{
+      method:'POST',headers:{Cookie:remoteAdminCookie,'Content-Type':'application/json'},
+      body:JSON.stringify({approvedHours:12,idleHours:48,
+        approvedTools:['write_file','read_file','edit_file']})
+    }
+  );
+  assert.equal(approveSession.status,200,await approveSession.text());
+  const updatedSessions:any=await (await fetch(origin+'/api/admin/agent-sessions',{
+    headers:{Cookie:remoteAdminCookie}
+  })).json();
+  const selected=updatedSessions.sessions.find(
+    (item:any)=>item.id===pendingSession.sessionId
+  );
+  assert.equal(selected.approvedHours,12,'Owner selects approval hours');
+  assert.equal(selected.idleHours,48,'Owner-selected inactivity override reaches storage');
+  assert.deepEqual(selected.requestedTools,['write_file','read_file']);
+  assert.deepEqual(selected.tools,['write_file','read_file','edit_file'],
+    'Owner grant may explicitly include a tool the AI did not request');
+  assert.equal(selected.requestedHours,undefined,'New AI requests do not choose duration');
+  const sessionWrite:any=await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'session-authorized.txt',
+      content:'approved session without global unlock',
+      agentSessionToken:pendingSession.agentSessionToken}
+  });
+  assert.equal(sessionWrite.isError,undefined,JSON.stringify(sessionWrite));
+  assert.equal(await readFile(join(root,'session-authorized.txt'),'utf8'),
+    'approved session without global unlock');
+  assert.match(await cli('status'),/Security: LOCKED/);
+  const otherAgentWrite:any=await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'other-ai.txt',content:'denied'}
+  });
+  assert.equal(otherAgentWrite.isError,true,'Sharing a Zone connector must not share Agent Session authorization');
+  const sessionRevoke=await fetch(
+    origin+'/api/admin/agent-sessions/'+pendingSession.sessionId+'/revoke',{
+      method:'POST',headers:{Cookie:remoteAdminCookie}
+    }
+  );
+  assert.equal(sessionRevoke.status,200);
+  const revokedWrite:any=await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'revoked-session.txt',
+      content:'denied',agentSessionToken:pendingSession.agentSessionToken}
+  });
+  assert.equal(revokedWrite.isError,true,'Revoked approval must immediately block privileged calls');
+
+  // A direct per-device MCP URL has a separate approval namespace from Zone MCP.
+  const directRequest:any=await client.callTool({
+    name:'request_agent_session',arguments:{tools:['write_file']}
+  });
+  assert.equal(directRequest.isError,undefined);
+  const directSession=JSON.parse(directRequest.content[0].text);
+  const beforeDirect:any=await client.callTool({
+    name:'get_agent_session_status',arguments:{agentSessionToken:directSession.agentSessionToken}
+  });
+  assert.equal(JSON.parse(beforeDirect.content[0].text).session.state,'pending');
+  const directApproved=await fetch(
+    origin+'/api/admin/agent-sessions/'+directSession.sessionId+'/approve',{
+      method:'POST',headers:{Cookie:remoteAdminCookie,'Content-Type':'application/json'},
+      body:JSON.stringify({approvedHours:6})
+    }
+  );
+  assert.equal(directApproved.status,200);
+  const directWrite:any=await client.callTool({
+    name:'write_file',arguments:{path:'device-session.txt',content:'direct scope',
+      agentSessionToken:directSession.agentSessionToken}
+  });
+  assert.equal(directWrite.isError,undefined);
+  const wrongConnector:any=await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'wrong-connector.txt',content:'denied',
+      agentSessionToken:directSession.agentSessionToken}
+  });
+  assert.equal(wrongConnector.isError,true,'Device approval must not authorize the Zone connector');
+  assert.equal((await fetch(
+    origin+'/api/admin/agent-sessions/'+directSession.sessionId+'/revoke',{
+      method:'POST',headers:{Cookie:remoteAdminCookie}
+    }
+  )).status,200);
+  assert.equal((await client.callTool({name:'write_file',arguments:{
+    path:'device-revoked.txt',content:'denied',agentSessionToken:directSession.agentSessionToken
+  }})).isError,true);
+
   const remoteUnlockPath=
     `${origin}/api/admin/zones/${createdZone.zoneId}/devices/${registered.deviceId}/unlock`;
+  const remoteLockPath=
+    `${origin}/api/admin/zones/${createdZone.zoneId}/devices/${registered.deviceId}/lock`;
+
+  // Global Remote Lock is an owner action, not a device or Zone MCP tool.
+  assert.equal((await fetch(remoteLockPath,{method:'POST'})).status,401);
+  assert.equal((await fetch(remoteLockPath,{
+    method:'POST',
+    headers:{Cookie:remoteAdminCookie,Origin:'https://untrusted.example'}
+  })).status,403);
+  assert.equal((await fetch(
+    `${origin}/api/admin/zones/${crypto.randomUUID()}/devices/${registered.deviceId}/lock`,
+    {method:'POST',headers:{Cookie:remoteAdminCookie}}
+  )).status,404);
 
   assert.equal(
     (
@@ -1242,6 +1376,57 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     'remote admin unlock'
   );
 
+  // A scoped Agent Session remains authorized through global Remote Lock.
+  const keepSessionResult:any=await zoneClient.callTool({
+    name:'request_agent_session',arguments:{
+      scope:'devices',devices:[registered.deviceId],tools:['write_file']}
+  });
+  assert.equal(keepSessionResult.isError,undefined);
+  const keepSession=JSON.parse(keepSessionResult.content[0].text);
+  assert.equal((await fetch(
+    origin+'/api/admin/agent-sessions/'+keepSession.sessionId+'/approve',{
+      method:'POST',headers:{Cookie:remoteAdminCookie,'Content-Type':'application/json'},
+      body:JSON.stringify({approvedHours:2})
+    }
+  )).status,200);
+
+  const remoteLock=await fetch(remoteLockPath,{
+    method:'POST',headers:{Cookie:remoteAdminCookie}
+  });
+  assert.equal(remoteLock.status,200);
+  const remoteLockResult:any=await remoteLock.json();
+  assert.equal(remoteLockResult.ok,true);
+  assert.equal(remoteLockResult.locked,true);
+  assert.equal(remoteLockResult.source,null);
+  assert.match(await cli('status'),/Security: LOCKED/);
+  assert.equal((await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'remote-locked.txt',
+      content:'denied without a personal grant'}
+  })).isError,true,'Remote Lock must end global connector authorization');
+  // An attempted out-of-scope operation must not poison this valid token.
+  assert.equal((await zoneClient.callTool({
+    name:'read_file',arguments:{device:'Zone Worker',path:'still-approved.txt',
+      agentSessionToken:keepSession.agentSessionToken}
+  })).isError,true,'An ungranted tool must be denied');
+  assert.equal((await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'still-approved.txt',
+      content:'allowed by independent session',agentSessionToken:keepSession.agentSessionToken}
+  })).isError,undefined,'Scope denial must not invalidate other approved tools');
+  assert.equal(await readFile(join(root,'still-approved.txt'),'utf8'),
+    'allowed by independent session');
+  assert.equal((await fetch(remoteLockPath,{
+    method:'POST',headers:{Cookie:remoteAdminCookie}
+  })).status,200,'Remote Lock must be idempotent while already locked');
+  assert.equal((await fetch(
+    origin+'/api/admin/agent-sessions/'+keepSession.sessionId+'/revoke',{
+      method:'POST',headers:{Cookie:remoteAdminCookie}
+    }
+  )).status,200);
+  assert.equal((await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'locked-revoked.txt',
+      content:'denied',agentSessionToken:keepSession.agentSessionToken}
+  })).isError,true);
+
   assert.match(
     await cli('lock'),
     /Security: LOCKED/
@@ -1260,7 +1445,8 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
       content:'through zone router'
     }
   });
-  assert.equal(zoneUnlockedWrite.isError,undefined);
+  assert.equal(zoneUnlockedWrite.isError,undefined,
+    'Local unlock should authorize Zone write: '+JSON.stringify(zoneUnlockedWrite).slice(0,1200));
   assert.equal(
     await readFile(join(root,'zone-routed.txt'),'utf8'),
     'through zone router'
@@ -1319,7 +1505,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
 
   tools=await client.listTools();
 
-  assert.equal(tools.tools.length,26);
+  assert.equal(tools.tools.length,28);
 
   const content='中文😀'.repeat(25000);
 
@@ -1372,7 +1558,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
 
   assert.equal(
     (await client.listTools()).tools.length,
-    26
+    28
   );
 
   const changedConfig=JSON.parse(originalConfig);
