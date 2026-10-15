@@ -1,4 +1,5 @@
 import { uiI18nClient } from '../src/ui-i18n';
+import { OWNER_TOOL_GROUPS } from './agent-session-tool-groups';
 
 const styles=`
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f5f7fb}
@@ -22,6 +23,20 @@ button:disabled{cursor:not-allowed;opacity:.58}
 .zone{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:14px 0;border-top:1px solid #edf0f5}
 .zone:first-child{border-top:0}
 .zone-actions{display:flex;gap:8px;flex-wrap:wrap}
+.session-row{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;border-top:1px solid #edf0f5;padding:13px 0;flex-wrap:wrap}
+.session-row:first-child{border-top:0}
+.session-info{flex:1;min-width:230px;overflow-wrap:anywhere}
+.session-actions{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
+.session-actions label{margin:0}
+.session-actions input{max-width:100px}
+.grant-editor{flex-basis:100%;min-width:280px;border:1px solid #dce3f0;border-radius:9px;padding:9px}
+.grant-editor summary{cursor:pointer;font-weight:700;color:#34445d;font-size:13px}
+.grant-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.grant-actions button{font-size:12px;padding:6px 9px}
+.grant-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:5px;max-height:240px;overflow:auto;margin-top:8px}
+.grant-grid label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;margin:0}
+.grant-grid input{width:auto;max-width:none}
+.grant-preview{font-size:12px;color:#42516a;overflow-wrap:anywhere;margin-top:8px}
 .device{display:grid;grid-template-columns:minmax(180px,1fr) minmax(160px,1fr) auto;gap:12px;align-items:center;padding:14px 0;border-top:1px solid #edf0f5}
 .device:first-child{border-top:0}
 .name{font-weight:800}
@@ -171,6 +186,17 @@ export function adminPage(){
 <button id="logout" class="secondary">Sign Out</button>
 </div>
 
+<section class="card" id="agentSessionsPanel">
+<div class="topbar">
+<div>
+<h2>Agent Session Approvals</h2>
+<p>AI agents request access to tools and devices. You choose how long approval lasts. These are separate from global Remote Unlock.</p>
+</div>
+<button id="refreshAgentSessions" class="secondary">Refresh</button>
+</div>
+<div id="agentSessions"><p>Loading Agent Sessions...</p></div>
+</section>
+
 <section class="card">
 <h2>Create Zone</h2>
 <div class="grid">
@@ -271,6 +297,7 @@ async function api(path,options={}){
   return body;
 }
 const jsonHeaders={'Content-Type':'application/json'};
+const ownerToolGroups=${JSON.stringify(OWNER_TOOL_GROUPS)};
 
 async function writeClipboard(value){
   if(navigator.clipboard&&window.isSecureContext){
@@ -439,7 +466,7 @@ async function openZone(zoneId){
 
     const remoteUnlock=document.createElement('button');
     remoteUnlock.className='secondary';
-    remoteUnlock.textContent='Remote Unlock';
+    remoteUnlock.textContent='Remote Unlock (fixed deadline)';
     remoteUnlock.disabled=!device.online;
     remoteUnlock.onclick=()=>withOperation(
       window.uiT('remoteUnlocking',{name:device.name}),
@@ -461,6 +488,25 @@ async function openZone(zoneId){
               ? window.uiT('remotelyUnlockedExpiry',{time:new Date(result.expiresAt).toLocaleString()})
               : '')
         );
+      }
+    );
+
+    const remoteLock=document.createElement('button');
+    remoteLock.className='secondary';
+    remoteLock.textContent=window.uiT('remoteLock');
+    remoteLock.title=window.uiT('remoteLockScopeHint');
+    remoteLock.disabled=!device.online;
+    remoteLock.onclick=()=>withOperation(
+      window.uiT('remoteLocking',{name:device.name}),
+      async()=>{
+        const result=await api(
+          '/api/admin/zones/'+encodeURIComponent(activeZoneId)
+            +'/devices/'+encodeURIComponent(device.deviceId)
+            +'/lock',
+          {method:'POST'}
+        );
+        if(result.locked!==true)throw new Error('Remote Lock was not confirmed by the Agent.');
+        show(window.uiT('remotelyLocked',{name:device.name}));
       }
     );
 
@@ -500,7 +546,7 @@ async function openZone(zoneId){
       });
     };
 
-    actions.append(unlockMinutes,remoteUnlock,copy,rename,revoke);
+    actions.append(unlockMinutes,remoteUnlock,remoteLock,copy,rename,revoke);
     row.append(info,state,actions);
     host.appendChild(row);
   }
@@ -559,6 +605,324 @@ $('rotateConnector').onclick=()=>{
   });
 };
 
+const currentToolNames=[...new Set(Object.values(ownerToolGroups).flat())];
+function compactTools(tools){
+  if(tools.includes('*'))return 'Dynamic wildcard (*) — future enabled tools included';
+  const remaining=new Set(tools);
+  if(currentToolNames.length&&currentToolNames.every(t=>remaining.has(t))){
+    return 'All current ('+currentToolNames.length+' tools)';
+  }
+  const parts=[];
+  for(const [name,members] of Object.entries(ownerToolGroups)){
+    if(members.every(t=>remaining.has(t))){
+      parts.push(name);
+      for(const tool of members)remaining.delete(tool);
+    }
+  }
+  parts.push(...remaining);
+  return parts.join(', ');
+}
+function toolDetails(tools){
+  const details=document.createElement('details');
+  const summary=document.createElement('summary');
+  summary.textContent=compactTools(tools);
+  const list=document.createElement('div');
+  list.className='meta';
+  list.textContent=tools.join(', ');
+  details.append(summary,list);
+  return details;
+}
+function toolGrantEditor(initial){
+  const details=document.createElement('details');
+  details.className='grant-editor';
+  const summary=document.createElement('summary');
+  summary.textContent='Choose permitted tools';
+  details.appendChild(summary);
+  const initialWildcard=initial.includes('*');
+  let touched=false;
+  let selected=new Set(initialWildcard?currentToolNames:initial);
+  const buttons=document.createElement('div');buttons.className='grant-actions';
+  const grid=document.createElement('div');grid.className='grant-grid';
+  const preview=document.createElement('div');preview.className='grant-preview';
+  const inputs=[];
+  const refresh=()=>{
+    for(const input of inputs)input.checked=selected.has(input.value);
+    preview.textContent=initialWildcard&&!touched
+      ?'Existing dynamic wildcard (*) unchanged. Editing the selection creates an explicit current-tool grant.'
+      :compactTools([...selected])||'Select at least one tool';
+  };
+  const add=(label,fn)=>{
+    const button=document.createElement('button');button.type='button';
+    button.className='secondary';button.textContent=label;
+    button.onclick=()=>{touched=true;fn();refresh();};buttons.appendChild(button);
+  };
+  add('Requested/granted only',()=>selected=new Set(initial.includes('*')?currentToolNames:initial));
+  for(const [name,members] of Object.entries(ownerToolGroups))add('Add '+name,()=>members.forEach(t=>selected.add(t)));
+  add('All current tools',()=>selected=new Set(currentToolNames));
+  add('Clear',()=>selected.clear());
+  for(const name of currentToolNames){
+    const input=document.createElement('input');input.type='checkbox';input.value=name;
+    const label=document.createElement('label');label.append(input,document.createTextNode(name));
+    input.onchange=()=>{touched=true;if(input.checked)selected.add(name);else selected.delete(name);refresh();};
+    grid.append(label);inputs.push(input);
+  }
+  details.append(buttons,grid,preview);refresh();
+  return {details,get:()=>initialWildcard&&!touched?['*']:[...selected]};
+}
+async function loadAgentSessions(){
+  const data=await api('/api/admin/agent-sessions');
+  const host=$('agentSessions');
+  host.textContent='';
+  if(!data.sessions.length){
+    const message=document.createElement('p');
+    message.textContent='No Agent Session requests yet.';
+    host.appendChild(message);
+    return;
+  }
+  const notice=document.createElement('p');
+  notice.className='meta';
+  notice.textContent='Group approvals cover the tools in that group today; new tools added later are not granted automatically.';
+  host.appendChild(notice);
+  for(const session of data.sessions){
+    const row=document.createElement('div');
+    row.className='session-row';
+    const info=document.createElement('div');
+    info.className='session-info';
+    const title=document.createElement('div');
+    title.className='name';
+    title.textContent=(session.connectorKind==='zone'?'Zone ':'Device ')
+      +session.connectorId+' · '+session.state.toUpperCase();
+    info.appendChild(title);
+    const scope=document.createElement('div');
+    scope.className='meta';
+    scope.textContent='Scope: '+(session.scope==='zone/all'?'ENTIRE ZONE (including devices enrolled in the future)':session.scope)
+      +(session.scope==='devices'?' ('+session.devices.join(', ')+')':'')
+      +' · Requested tools: '+compactTools(session.requestedTools||session.tools)
+      +(session.state==='approved'?' · Granted tools: '+compactTools(session.tools):'');
+    info.appendChild(scope);
+    const requestedDetails=toolDetails(session.requestedTools||session.tools);
+    info.appendChild(requestedDetails);
+    // The owner, not the AI, determines the approval lifetime.
+    // A 24h idle limit has no effect on a shorter absolute approval.
+    const idleRelevant=Number.isInteger(session.approvedHours)
+      &&session.approvedHours>session.idleHours;
+    const identity=document.createElement('div');
+    identity.className='meta';
+    identity.textContent='Session ID: '+session.id
+      +(session.approvedHours?' · Granted '+session.approvedHours+'h':' · Duration chosen by owner')
+      +(idleRelevant?' · Idle '+session.idleHours+'h':'')
+      +' · '+new Date(session.createdAt).toLocaleString();
+    info.appendChild(identity);
+    if(idleRelevant){
+      const idleNote=document.createElement('div');
+      idleNote.className='meta';
+      idleNote.textContent='Activity extends the '+session.idleHours+'h idle timeout without new approval. No use for '+session.idleHours+'h ends this session, even if the overall approval has not expired.';
+      info.appendChild(idleNote);
+    }
+    if(session.note){
+      const note=document.createElement('div');
+      note.className='meta';
+      note.textContent='Purpose: '+session.note;
+      info.appendChild(note);
+    }
+    if(session.state==='approved'){
+      const expires=document.createElement('div');
+      expires.className='meta';
+      expires.textContent='Expires: '+new Date(session.hardUntil).toLocaleString()
+        +(idleRelevant?' · Idle expiry: '+new Date(session.idleUntil).toLocaleString():'')
+        +' · Last use: '+(session.lastUsedAt?new Date(session.lastUsedAt).toLocaleString():'Never');
+      info.appendChild(expires);
+    }
+    row.appendChild(info);
+    const actions=document.createElement('div');
+    actions.className='session-actions';
+    if(session.state==='pending'){
+      const label=document.createElement('label');
+      label.textContent='Grant duration (hours, 1–720; maximum 30 days)';
+      const hours=document.createElement('input');
+      hours.type='number';
+      hours.min='1';hours.max='720';hours.step='1';
+      hours.value='1';
+      label.appendChild(hours);
+      actions.appendChild(label);
+
+      const idleLabel=document.createElement('label');
+      idleLabel.textContent='Inactivity timeout';
+      const idleSelect=document.createElement('select');
+      for(const value of [24,48]){
+        const option=document.createElement('option');
+        option.value=String(value);
+        option.textContent=value+' hours';
+        idleSelect.appendChild(option);
+      }
+      idleSelect.value='24';
+      idleLabel.appendChild(idleSelect);
+      const updateIdleVisibility=()=>{
+        idleLabel.className=Number(hours.value)>24?'':'hidden';
+      };
+      hours.addEventListener('input',updateIdleVisibility);
+      updateIdleVisibility();
+      actions.appendChild(idleLabel);
+
+      // Requested scopes/devices are fixed; only an independently signed-in
+      // owner may explicitly widen or narrow the allowed tool operations.
+      // Defaults remain exactly the AI request (least privilege).
+      const originallyRequested=session.requestedTools||session.tools;
+      const toolNames=[...new Set(Object.values(ownerToolGroups).flat())];
+      // Legacy MCP requests may ask for '*'; this now expands to a fixed
+      // list before approval. No UI operation submits an open-ended wildcard.
+      const requestedSelection=()=>new Set(
+        originallyRequested.includes('*')?toolNames:originallyRequested
+      );
+      let selectedTools=requestedSelection();
+      const editor=document.createElement('details');
+      editor.className='grant-editor';
+      const summary=document.createElement('summary');
+      summary.textContent='Choose permitted tools (defaults to requested)';
+      editor.appendChild(summary);
+      const presets=document.createElement('div');
+      presets.className='grant-actions';
+      const checklist=document.createElement('div');
+      checklist.className='grant-grid';
+      const preview=document.createElement('div');
+      preview.className='grant-preview';
+      const checkboxes=[];
+      const refreshSelection=()=>{
+        const all=toolNames.every(name=>selectedTools.has(name));
+        for(const checkbox of checkboxes){
+          checkbox.checked=selectedTools.has(checkbox.value);
+        }
+        preview.textContent='Owner will grant: '
+          +(all?'ALL '+toolNames.length+' currently known tools (future tools NOT included)'
+            :([...selectedTools].join(', ')||'NONE — choose at least one'));
+        if(originallyRequested[0]!=='*'
+          && [...selectedTools].some(name=>!originallyRequested.includes(name))){
+          preview.textContent+=' · This grants MORE tools than the AI requested.';
+        }
+      };
+      const presetButton=(label,run)=>{
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='secondary';
+        button.textContent=label;
+        button.onclick=()=>{run();refreshSelection();};
+        presets.appendChild(button);
+      };
+      presetButton('Requested only',()=>{selectedTools=requestedSelection();});
+      for(const [group,names] of Object.entries(ownerToolGroups)){
+        presetButton('Add '+group,()=>{
+          for(const name of names)selectedTools.add(name);
+        });
+      }
+      presetButton('All current tools',()=>{selectedTools=new Set(toolNames);});
+      presetButton('Clear',()=>{selectedTools.clear();});
+      for(const name of toolNames){
+        const checkbox=document.createElement('input');
+        checkbox.type='checkbox';
+        checkbox.value=name;
+        const label=document.createElement('label');
+        label.append(checkbox,document.createTextNode(name));
+        checkbox.onchange=()=>{
+          if(checkbox.checked)selectedTools.add(name);
+          else selectedTools.delete(name);
+          refreshSelection();
+        };
+        checklist.appendChild(label);
+        checkboxes.push(checkbox);
+      }
+      editor.append(presets,checklist,preview);
+      refreshSelection();
+      actions.appendChild(editor);
+
+      const approve=document.createElement('button');
+      approve.textContent='Approve';
+      approve.onclick=()=>{
+        const duration=Number(hours.value);
+        if(!Number.isInteger(duration)||duration<1||duration>720){
+          show('Grant duration must be between 1 and 720 hours',true);return;
+        }
+        const idleHours=duration>24?Number(idleSelect.value):24;
+        if(idleHours!==24&&idleHours!==48){
+          show('Invalid inactivity timeout',true);return;
+        }
+        const approvedTools=[...selectedTools];
+        if(!approvedTools.length){
+          show('Select at least one permitted tool',true);return;
+        }
+        withOperation('Approving Agent Session…',async()=>{
+          await api('/api/admin/agent-sessions/'+session.id+'/approve',{
+            method:'POST',headers:jsonHeaders,body:JSON.stringify({
+              approvedHours:duration,idleHours,approvedTools
+            })
+          });
+          await loadAgentSessions();
+          show('Agent Session approved for '+duration+' hours.');
+        });
+      };
+      const reject=document.createElement('button');
+      reject.className='secondary';reject.textContent='Reject';
+      reject.onclick=()=>{
+        if(!window.confirm('Reject this Agent Session?'))return;
+        withOperation('Rejecting Agent Session…',async()=>{
+          await api('/api/admin/agent-sessions/'+session.id+'/reject',{method:'POST'});
+          await loadAgentSessions();show('Agent Session rejected.');
+        });
+      };
+      actions.append(approve,reject);
+    }else if(session.state==='approved'){
+      const permissionEditor=toolGrantEditor(session.tools);
+      actions.appendChild(permissionEditor.details);
+      const edit=document.createElement('button');edit.className='secondary';
+      edit.textContent='Edit permissions';
+      edit.onclick=()=>{
+        const approvedTools=permissionEditor.get();
+        if(!approvedTools.length){show('Choose at least one tool',true);return;}
+        withOperation('Editing Agent Session…',async()=>{
+          await api('/api/admin/agent-sessions/'+session.id+'/edit',{
+            method:'POST',headers:jsonHeaders,body:JSON.stringify({approvedTools})
+          });
+          await loadAgentSessions();show('Permissions updated for future calls.');
+        });
+      };
+      const extension=document.createElement('label');
+      extension.textContent='New expiry from now (1–720 hours)';
+      const hours=document.createElement('input');hours.type='number';
+      hours.min='1';hours.max='720';hours.step='1';hours.value='1';
+      extension.appendChild(hours);
+      const extend=document.createElement('button');extend.className='secondary';
+      extend.textContent='Extend';
+      extend.onclick=()=>{
+        const approvedHours=Number(hours.value);
+        if(!Number.isInteger(approvedHours)||approvedHours<1||approvedHours>720){
+          show('Extension must be between 1 and 720 hours',true);return;
+        }
+        withOperation('Extending Agent Session…',async()=>{
+          await api('/api/admin/agent-sessions/'+session.id+'/extend',{
+            method:'POST',headers:jsonHeaders,body:JSON.stringify({approvedHours})
+          });
+          await loadAgentSessions();show('Session expiry updated from now.');
+        });
+      };
+      actions.append(edit,extension,extend);
+      const revoke=document.createElement('button');
+      revoke.className='danger';revoke.textContent='Revoke Session';
+      revoke.onclick=()=>{
+        if(!window.confirm('Revoke this Agent Session immediately?'))return;
+        withOperation('Revoking Agent Session…',async()=>{
+          const result=await api('/api/admin/agent-sessions/'+session.id+'/revoke',{method:'POST'});
+          await loadAgentSessions();
+          show('Agent Session revoked. Best-effort cancellation requested for '
+            +(result.cancellation?.requestsSignalled??0)+' in-flight request(s).');
+        });
+      };
+      actions.appendChild(revoke);
+    }
+    row.appendChild(actions);
+    host.appendChild(row);
+  }
+}
+$('refreshAgentSessions').onclick=()=>withOperation('Refreshing Agent Sessions…',loadAgentSessions);
+
 $('refreshZones').onclick=()=>withOperation('Refreshing Zones…',async()=>{
   await loadZones();
   show('Zone list refreshed.');
@@ -572,7 +936,7 @@ $('logout').onclick=()=>withOperation('Signing out…',async()=>{
   location.reload();
 });
 
-withOperation('Loading Zones…',loadZones);
+withOperation('Loading Relay Admin…',async()=>{await loadZones();await loadAgentSessions();});
 `
   );
 }
