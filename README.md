@@ -5,11 +5,11 @@
 <h1 align="center">Easy Local MCP</h1>
 
 <p align="center">
-  A secure local MCP bridge that lets ChatGPT work with your files, shell, processes, skills, workspaces, and external MCP servers.
+  An MCP bridge for operator-managed hosts that lets ChatGPT work with files, shell, processes, skills, workspaces, and external MCP servers.
 </p>
 
 <p align="center">
-  <a href="README.zh-CN.md">Chinese README</a>
+  <a href="README.zh-CN.md">Chinese README</a> | <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 ## What is Easy Local MCP?
@@ -29,7 +29,27 @@ flowchart TD
 
 The Agent makes the outbound connection, so you do not need a public IP address or an inbound port.
 
-Easy Local MCP is based on [daodao97/localmcp](https://github.com/daodao97/localmcp) and is maintained as an independent project.
+## Security Philosophy
+
+**Trust the prepared environment, not the agent.**
+
+Easy Local MCP assumes agents operate in dedicated, operator-prepared environments, preferably isolated VMs, where mistakes and destructive actions are acceptable risks.
+
+Operators are responsible for isolation, backups, and protecting sensitive data. This project focuses on connecting and managing remote hosts, including those behind NAT, and granting agents access through operator approval.
+
+It is **not a fine-grained command authorization system or a security sandbox**.
+
+For different approaches involving more granular tool controls and permissions, consider [Bridge MCP](https://github.com/muchiny/bridge-mcp), [Desktop Commander MCP](https://github.com/wonderwhy-er/DesktopCommanderMCP), and [Conduit Desktop](https://github.com/advenimus/conduit-desktop). Their security models and guarantees differ.
+
+## Project Origin
+
+This project is an independent fork of [Ryanma-YX/easy-local-mcp](https://github.com/Ryanma-YX/easy-local-mcp), which itself builds upon [daodao97/localmcp](https://github.com/daodao97/localmcp). Thanks to both projects and their contributors for their foundational work.
+
+We maintain our own design philosophy, threat model, and contribution policies. These policies do not necessarily reflect upstream.
+
+We may contribute compatible improvements upstream when appropriate, while respecting upstream's own development and review standards. Changes that diverge from upstream's direction may remain exclusive to this fork.
+
+For the foreseeable future, however, upstream contributions are unlikely. We understand upstream to expect substantial human code review, which our current development workflow cannot accommodate. We welcome revisiting this if upstream clarifies or changes its policy to explicitly accept AI-reviewed contributions.
 
 ## Highlights
 
@@ -39,7 +59,7 @@ Easy Local MCP is based on [daodao97/localmcp](https://github.com/daodao97/local
 - Multiple workspaces
 - Skills
 - External MCP servers through a stable gateway
-- Safe-by-default permission model
+- LOCKED by default; configured read-only tools can remain available
 - Local LOCK / UNLOCK gate for privileged operations
 - Authenticated local IPC
 - Audit logging and credential rotation
@@ -84,7 +104,9 @@ npm run desktop:bundle
 
 The complete MCP URL contains an access credential. Do not post it in issues, screenshots, logs, chats, or Git repositories.
 
-## Security model
+## Access Controls
+
+LOCK/UNLOCK controls when privileged capabilities can run; it does not isolate the Agent or make an unsafe host safe.
 
 The Agent starts **LOCKED**.
 
@@ -153,11 +175,9 @@ npm run desktop:bundle
 
 More documentation is available in the [project Wiki](https://github.com/Ryanma-YX/easy-local-mcp/wiki).
 
-## Project origin
+## Contributing
 
-Easy Local MCP is derived from [daodao97/localmcp](https://github.com/daodao97/localmcp). Thanks to the original project for the Local MCP and Relay foundation.
-
-This fork is maintained independently and is not intended to merge back upstream.
+AI-assisted and autonomous contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR for our quality, review, and project-alignment expectations.
 
 ## License
 
