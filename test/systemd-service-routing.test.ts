@@ -211,6 +211,6 @@ test('an actual systemd user service can launch node and npx through configured 
   };
   assert.equal(result.node,0);
   assert.equal(result.npx,0);
-  assert.match(result.nodeOutput,/^v22/);
+  assert.equal(result.nodeOutput.trim(),process.version);
   assert.match(result.npxOutput,/\d/);
 });
