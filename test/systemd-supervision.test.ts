@@ -9,7 +9,9 @@ test('rootless systemd unit uses cgroup cleanup, health notification, and restar
   const unit=renderUserService({
     nodePath:'/tmp/custom node/bin/node',
     entryPath:'/tmp/project/dist/index.js',
-    workingDirectory:'/tmp/project with spaces'
+    workingDirectory:'/tmp/project with spaces',
+    // Unit text must use Linux PATH entries even on a Windows CI runner.
+    executablePath:'/tmp/custom node/bin:/usr/local/bin:/usr/bin:/bin'
   });
   for(const setting of [
     'KillMode=control-group','Type=notify','NotifyAccess=all',
@@ -21,7 +23,7 @@ test('rootless systemd unit uses cgroup cleanup, health notification, and restar
 });
 
 test('a healthy HTTP probe is required for systemd watchdog credits',{
-  timeout:6000
+  skip:process.platform!=='linux',timeout:6000
 },async()=>{
   const calls:string[][]=[];
   let healthy=true,reason='';

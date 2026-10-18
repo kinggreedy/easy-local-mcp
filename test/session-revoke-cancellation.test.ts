@@ -7,7 +7,7 @@ test('revoking one in-flight run_command kills its command without cancelling ot
   const runner=new CommandRunner();
   const revoked=new AbortController();
   const unaffected=new AbortController();
-  const sleep='node -e "setTimeout(()=>process.stdout.write(\'completed\'),650)"';
+  const sleep='node -e "setTimeout(()=>process.stdout.write(\'completed\'),2500)"';
   const first=runner.run(sleep,tmpdir(),10_000,revoked.signal);
   const second=runner.run(sleep,tmpdir(),10_000,unaffected.signal);
   await new Promise(resolve=>setTimeout(resolve,150));
