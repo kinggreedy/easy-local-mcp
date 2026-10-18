@@ -3,6 +3,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
+import {AGENT_VERSION} from '../version.js';
+
 export interface McpServerConfig { command:string; args?:string[]; env?:Record<string,string>; }
 interface Loaded { name:string; client:Client; tools:Tool[]; }
 export class McpLoader {
@@ -19,7 +21,7 @@ export class McpLoader {
     const inFlight=this.starting.get(name);if(inFlight)return inFlight;
     const cfg=this.servers[name];if(!cfg)throw new Error(`Unknown MCP server '${name}'`);
     const operation=(async()=>{
-      const client=new Client({name:`easy-local-mcp-${name}`,version:'0.4.0'});
+      const client=new Client({name:`easy-local-mcp-${name}`,version:AGENT_VERSION});
       const transport=new StdioClientTransport({command:cfg.command,args:cfg.args||[],env:cfg.env,stderr:'inherit'});
       const server={name,client,tools:[] as Tool[]};
       try{

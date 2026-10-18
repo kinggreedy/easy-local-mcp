@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { stateDir, logFile, maskMcpUrl, serveControl } from './lifecycle.js';
 import { config } from './config.js';
+import {AGENT_VERSION} from './version.js';
 import WebSocket from 'ws';
 import {
   Assembly,
@@ -112,7 +113,7 @@ async function registerDevice(workerUrl:string):Promise<Settings>{
           name:process.env.LOCALMCP_DEVICE_NAME?.trim()||hostname(),
           platform:process.platform,
           arch:process.arch,
-          version:'0.4.0'
+          version:AGENT_VERSION
         })
       : '{}',
     signal:AbortSignal.timeout(15000)
@@ -560,7 +561,8 @@ if(!localReady||closing){
       wsUrl,
       {
         headers:{
-          Authorization:`Bearer ${settings.agentToken}`
+          Authorization:`Bearer ${settings.agentToken}`,
+          'x-localmcp-agent-version':AGENT_VERSION
         },
         handshakeTimeout:15000,
         maxPayload:160000

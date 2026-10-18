@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
+import {AGENT_VERSION} from '../src/version.js';
 
 test('stable MCP gateways stay lazy, require unlock, validate and forward external tools',async t=>{
   const root=await mkdtemp(join(tmpdir(),'localmcp-gateway-'));
@@ -80,6 +81,7 @@ test('stable MCP gateways stay lazy, require unlock, validate and forward extern
   t.after(()=>client.close());
 
   await client.connect(transport);
+  assert.equal(client.getServerVersion()?.version,AGENT_VERSION);
 
   const call=(name:string,args:Record<string,unknown>={})=>
     client.callTool({

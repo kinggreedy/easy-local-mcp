@@ -1,3 +1,6 @@
+import {zoneMcpServerVersion} from './version';
+import {readDeviceStatus} from './device-version';
+
 interface ZoneMcpEnv {
   RELAY:DurableObjectNamespace;
   ZONE:DurableObjectNamespace;
@@ -99,24 +102,6 @@ async function context(
   }
 
   return await response.json() as ZoneContext;
-}
-
-async function deviceOnline(env:ZoneMcpEnv,deviceId:string){
-  const response=await relay(env,deviceId).fetch(
-    new Request(
-      'https://relay.internal/status',
-      {
-        headers:{
-          'x-localmcp-internal':'1'
-        }
-      }
-    )
-  );
-
-  if(!response.ok)return false;
-
-  const value=await response.json() as {online?:boolean};
-  return value.online===true;
 }
 
 async function forward(
@@ -301,10 +286,14 @@ async function listDeviceResult(
   zoneContext:ZoneContext
 ){
   const devices=await Promise.all(
-    zoneContext.devices.map(async device=>({
-      ...device,
-      online:await deviceOnline(env,device.deviceId)
-    }))
+    zoneContext.devices.map(async device=>{
+      const status=await readDeviceStatus(env.RELAY,device.deviceId);
+      return {
+        ...device,
+        ...(status.version?{version:status.version}:{}),
+        online:status.online
+      };
+    })
   );
 
   return {
@@ -366,7 +355,7 @@ export async function handleZoneMcp(
         },
         serverInfo:{
           name:'easy-local-mcp-zone',
-          version:'0.4.0'
+          version:zoneMcpServerVersion()
         },
         instructions:
           'Use list_devices first when device names or online state are unknown. Other tools require a device argument.'

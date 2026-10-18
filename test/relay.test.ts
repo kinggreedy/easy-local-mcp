@@ -15,6 +15,8 @@ import {Assembly,frames,parseFrame,isConcurrentReadRequest} from '../src/relay-p
 import {validatedWorkerOrigin} from '../src/relay.js';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {AGENT_VERSION} from '../src/version.js';
+import {WORKER_RELEASE_VERSION} from '../worker/version.js';
 import WebSocket from 'ws';
 import {adminLoginPage,adminPage,adminSetupRequiredPage} from '../worker/admin.js';
 
@@ -503,6 +505,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   assert.equal(zoneInfo.devices[0].name,'MacMini-M4');
   assert.equal(zoneInfo.devices[0].platform,'darwin');
   assert.equal(zoneInfo.devices[0].arch,'arm64');
+  assert.equal(zoneInfo.devices[0].version,'0.3.11');
   assert.equal(zoneInfo.devices[0].online,false);
 
   const renamed=await fetch(
@@ -935,6 +938,28 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     404
   );
 
+  // A future Agent release is metadata, not an unsupported-version error.
+  // The Hub can report it without an Agent-provided Zone ID.
+  const futureAgent=new WebSocket(
+    origin.replace('http:','ws:')+`/agent/${registered.deviceId}`,
+    {
+      headers:{
+        Authorization:`Bearer ${registered.agentToken}`,
+        'x-localmcp-agent-version':'99.0.0'
+      }
+    }
+  );
+  await new Promise<void>((resolveOpen,reject)=>{
+    futureAgent.once('open',resolveOpen);
+    futureAgent.once('error',reject);
+  });
+  const futureZoneInfo:any=await (await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}`,
+    {headers:zoneHeaders}
+  )).json();
+  assert.equal(futureZoneInfo.devices[0].version,'99.0.0');
+  futureAgent.close();
+
   await mkdir(
     join(root,'.localmcp'),
     {
@@ -1121,6 +1146,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     )
   );
 
+  assert.equal(zoneClient.getServerVersion()?.version,WORKER_RELEASE_VERSION);
   const zoneTools=await zoneClient.listTools();
   assert.ok(zoneTools.tools.some(tool=>tool.name==='list_devices'));
   const zoneWorkspaceTool=zoneTools.tools.find(
@@ -1141,6 +1167,13 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   assert.equal(listedDevicePayload.devices.length,1);
   assert.equal(listedDevicePayload.devices[0].name,'Zone Worker');
   assert.equal(listedDevicePayload.devices[0].online,true);
+  assert.equal(listedDevicePayload.devices[0].version,AGENT_VERSION);
+
+  const refreshedZoneInfo:any=await (await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}`,
+    {headers:zoneHeaders}
+  )).json();
+  assert.equal(refreshedZoneInfo.devices[0].version,AGENT_VERSION);
 
   const zoneWorkspaces:any=await zoneClient.callTool({
     name:'list_workspaces',
