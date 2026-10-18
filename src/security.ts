@@ -250,13 +250,22 @@ export async function unlockLocal(
       source==='remote'?60:480,
       Number.isInteger(options.maxSessionMinutes)
         ? options.maxSessionMinutes!
-        : source==='remote'?60:240
+        : source==='remote'?minutes:240
     )
   );
   const now=Date.now();
   const until=now+minutes*60_000;
-  const hardUntil=now+maxSessionMinutes*60_000;
-  const fence=await readUnlockFence();
+  // Remote Unlock is fixed, unlike local CLI unlock.
+  const hardUntil=now+(source==='remote'?minutes:maxSessionMinutes)*60_000;
+  // Explicit Remote Unlock supersedes every older sliding lease. Rotate
+  // the generation first so a delayed local/legacy renewal cannot overwrite
+  // this owner's fixed-duration selection with a longer valid lease.
+  const fence=source==='remote'
+    ?randomBytes(32).toString('hex')
+    :await readUnlockFence();
+  if(source==='remote'){
+    await secureWriteFileAtomic(unlockFenceFile,fence!);
+  }
 
   await secureWriteFileAtomic(
     unlockFile,
@@ -298,7 +307,7 @@ export async function renewUnlockLease(
   }
 
   const lease=await readUnlockLease();
-  if(!lease||!config.renewUnlockOnPrivilegedUse){
+  if(!lease||lease.source==='remote'||!config.renewUnlockOnPrivilegedUse){
     return getUnlockStatus(false);
   }
 
@@ -432,9 +441,15 @@ export function configuredForTool(config:Config,name:string){
   return false;
 }
 
+// Trusted relay request context is supplied by the local Agent parent process,
+// never from model-controlled MCP arguments. Remote Unlock is the global override.
+export interface RemoteMcpApproval { approved:boolean }
+const publicRelayTools=new Set(['workspace_info','list_workspaces']);
+
 export async function authorizeTool(
   config:Config,
-  name:string
+  name:string,
+  remote?:RemoteMcpApproval
 ):Promise<{allowed:boolean;privileged:boolean;reason?:string}>{
   const privileged=isPrivilegedTool(name);
 
@@ -446,11 +461,19 @@ export async function authorizeTool(
     };
   }
 
-  if(privileged&&!(await isUnlocked(config.alwaysUnlocked))){
+  const unlocked=await isUnlocked(config.alwaysUnlocked);
+  if(remote&&!remote.approved&&!unlocked&&!publicRelayTools.has(name)){
+    return {
+      allowed:false,
+      privileged,
+      reason:'Agent Session Approval required while this device is not remotely unlocked.'
+    };
+  }
+  if(privileged&&!unlocked&&!remote?.approved){
     return {
       allowed:false,
       privileged:true,
-      reason:'Easy Local MCP is locked. Unlock it before using privileged tools.'
+      reason:'Easy Local MCP is locked. Unlock it or obtain an approved Agent Session.'
     };
   }
   return {
