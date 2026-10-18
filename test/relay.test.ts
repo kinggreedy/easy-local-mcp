@@ -1554,13 +1554,30 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     )
   );
 
-  await Promise.all(saturatedExecutions);
-  await client.callTool({
+  const saturatedResults:any[]=await Promise.all(saturatedExecutions);
+  for(const [index,result] of saturatedResults.entries()){
+    assert.equal(
+      result.isError,false,
+      'saturated external MCP call '+index+' failed: '+JSON.stringify(result).slice(0,500)
+    );
+  }
+
+  const stopped:any=await client.callTool({
     name:'stop_process',
     arguments:{
       processId:trackedProcessInfo.processId
     }
   });
+  assert.equal(stopped.isError,undefined,JSON.stringify(stopped));
+
+  // A fresh external MCP discovery acts as a barrier after the saturated
+  // mutation lane. Validate fixture health before testing overlapping calls.
+  const readyFixture:any=await client.callTool({
+    name:'list_mcp_tools',
+    arguments:{server:'fixture'}
+  });
+  assert.equal(readyFixture.isError,undefined,JSON.stringify(readyFixture));
+  assert.equal(JSON.parse(readyFixture.content[0].text).tools[0].name,'echo');
 
   const slowStarted=join(root,'slow-external-started');
   const slowExternal=client.callTool({
@@ -1574,6 +1591,13 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     }
   });
 
+  // If the RPC fails before creating its marker, surface the RPC error
+  // instead of misdiagnosing the request as a slow fixture startup.
+  let slowResult:unknown;
+  void slowExternal.then(
+    response=>{slowResult={response};},
+    error=>{slowResult={error:String(error)};}
+  );
   const slowStartDeadline=Date.now()+15000;
   while(true){
     try{
@@ -1581,8 +1605,11 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
       break;
     }catch(error:any){
       if(error?.code!=='ENOENT')throw error;
+      if(slowResult){
+        throw new Error('slow external MCP call returned before fixture startup: '+JSON.stringify(slowResult).slice(0,800));
+      }
       if(Date.now()>=slowStartDeadline){
-        throw new Error('slow external fixture did not start in time');
+        throw new Error('slow external fixture did not start in time (MCP call still pending)');
       }
       await new Promise(
         resolveDelay=>setTimeout(resolveDelay,25)
