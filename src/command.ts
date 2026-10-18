@@ -25,17 +25,31 @@ export function runCommand(
       stdio:['ignore','pipe','pipe'],windowsHide:process.platform==='win32'
     });
     let output=Buffer.alloc(0),timedOut=false,truncated=false;
+    let stopping=false;
     const stop=()=>{
+      if(stopping)return;
+      stopping=true;
       try{
-        if(process.platform!=='win32'&&child.pid){
+        if(process.platform==='win32'&&child.pid){
+          // Windows requires stopping cmd.exe and its spawned command tree.
+          const killer=spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{
+            windowsHide:true,stdio:'ignore'
+          });
+          const fallback=()=>{try{child.kill('SIGKILL');}catch{}};
+          killer.once('error',fallback);
+          killer.once('exit',code=>{if(code!==0)fallback();});
+        }else if(child.pid&&process.platform!=='win32'){
           process.kill(-child.pid,'SIGKILL');
         }else child.kill('SIGKILL');
-      }catch{}
+      }catch{
+        try{child.kill('SIGKILL');}catch{}
+      }
     };
-    const onAbort=()=>stop();
+    let cancelled=false;
+    const onAbort=()=>{cancelled=true;stop();};
     const timer=setTimeout(()=>{timedOut=true;stop();},timeoutMs);
     signal?.addEventListener('abort',onAbort,{once:true});
-    if(signal?.aborted)stop();
+    if(signal?.aborted)onAbort();
     const collect=(chunk:Buffer)=>{
       const remaining=256*1024-output.length;
       if(chunk.length>remaining)truncated=true;
@@ -50,9 +64,13 @@ export function runCommand(
     child.on('error',error=>{clean();reject(error);});
     child.on('close',(exitCode,exitSignal)=>{
       clean();
-      stop();
+      // A normally exited Windows shell must not be taskkilled by PID:
+      // Windows can reuse the identifier after the shell has exited.
+      if(process.platform!=='win32')stop();
       resolve({
-        exitCode,signal:exitSignal,output:output.toString('utf8'),
+        // A requested cancellation must never report successful completion.
+        exitCode:cancelled&&exitCode===0?null:exitCode,
+        signal:exitSignal,output:output.toString('utf8'),
         timedOut,truncated
       });
     });

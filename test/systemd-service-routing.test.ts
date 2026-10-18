@@ -96,6 +96,7 @@ test('systemd user unit captures the selected Node and explicit external MCP PAT
   const service=renderUserService({
     nodePath:'/opt/custom-node/bin/node',
     entryPath:'/tmp/localmcp/dist/index.js',
+    workingDirectory:'/tmp/localmcp',
     executablePath
   });
   assert.ok(service.includes('Environment="PATH='+executablePath+'"'));
