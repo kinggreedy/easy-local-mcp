@@ -25,7 +25,7 @@ The local Agent initiates the outbound WebSocket connection. No inbound port is 
 
 ## Deploy to Cloudflare
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Ryanma-YX/easy-local-mcp)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/kinggreedy/easy-local-mcp)
 
 After deployment:
 

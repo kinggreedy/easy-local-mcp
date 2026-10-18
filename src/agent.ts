@@ -6,6 +6,8 @@ import { createServer as createNetServer } from 'node:net';
 import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import {startSystemdSupervision} from './systemd-supervision.js';
+import {assertAgentStartupAllowed} from './systemd-service.js';
 import { stateDir, logFile, maskMcpUrl, serveControl } from './lifecycle.js';
 import { config } from './config.js';
 import {AGENT_VERSION} from './version.js';
@@ -46,12 +48,11 @@ interface Settings {
   zoneId?:string;
 }
 
+// Once the installer-owned user unit is present, direct Agent launches must
+// not silently bypass OS supervision. The unit is the only supported entry.
+await assertAgentStartupAllowed();
+
 await mkdir(stateDir,{recursive:true,mode:0o700});
-if(await zoneJoinCode()){
-  await disableAlwaysUnlocked('zone_join_staged');
-}
-await resetUnlockOnAgentStart();
-await auditSecurity('agent_start',{pid:process.pid});
 
 const pidFile=resolve(stateDir,'agent.pid');
 const workerFile=resolve(stateDir,'worker.json');
@@ -66,6 +67,7 @@ let reconnect:ReturnType<typeof setTimeout>|undefined;
 let reloading:Promise<void>|undefined;
 let settings:Settings|undefined;
 let origin:URL|undefined;
+let stopSystemdSupervision=()=>{};
 
 type AgentLogLevel='INFO'|'WARN'|'ERROR';
 
@@ -343,6 +345,20 @@ const closeControl=await serveControl(
     },
     rotate:rotateCredentials,
     reregister:reregisterDevice
+  },
+  async()=>{
+    // V14: final managed-mode check while Agent owns its startup socket lock.
+    // Installer holds the very same lock through preflight and unit write.
+    // No operational control request is accepted until this callback finishes.
+    await assertAgentStartupAllowed();
+    // A duplicate must never alter the running agent's shared unlock state.
+    // This runs only after successful bind, while startup ownership is held
+    // and the control endpoint is not yet accepting operational requests.
+    if(await zoneJoinCode()){
+      await disableAlwaysUnlocked('zone_join_staged');
+    }
+    await resetUnlockOnAgentStart();
+    await auditSecurity('agent_start',{pid:process.pid});
   }
 );
 
@@ -374,6 +390,8 @@ process.on('unhandledRejection',error=>{
 await loadSettings();
 
 const localToken=randomBytes(32).toString('hex');
+// Separate ephemeral relay header key; never exposed in MCP tool arguments.
+const relayGateKey=randomBytes(32).toString('hex');
 
 async function findFreePort(){
   if(process.env.LOCALMCP_AGENT_PORT){
@@ -403,18 +421,28 @@ async function findFreePort(){
 const port=await findFreePort();
 
 function spawnLocal(){
+  const childEnv:NodeJS.ProcessEnv={
+    ...process.env,
+    LOCALMCP_PORT:String(port),
+    LOCALMCP_TOKEN:localToken,
+    LOCALMCP_RELAY_GATE_KEY:relayGateKey,
+    LOCALMCP_INTERNAL:'1',
+    LOCALMCP_ZONE_ID:settings?.zoneId??''
+  };
+  // systemd health reporting belongs to the Agent only. Never delegate the
+  // service watchdog socket to an MCP-executing child.
+  for(const key of ['NOTIFY_SOCKET','WATCHDOG_USEC','WATCHDOG_PID',
+    'LOCALMCP_SYSTEMD_MANAGED']){
+    delete childEnv[key];
+  }
   return spawn(
     process.execPath,
     [fileURLToPath(new URL('./index.js',import.meta.url)),'http'],
     {
-      env:{
-        ...process.env,
-        LOCALMCP_PORT:String(port),
-        LOCALMCP_TOKEN:localToken,
-        LOCALMCP_INTERNAL:'1',
-        LOCALMCP_ZONE_ID:settings?.zoneId??''
-      },
-      stdio:['ignore','ignore','inherit'],
+      env:childEnv,
+      // A live IPC channel ties this HTTP server to the Agent's lifetime.
+      // On SIGKILL the channel closes even though normal shutdown cannot run.
+      stdio:['ignore','ignore','inherit','ipc'],
       windowsHide:process.platform==='win32'
     }
   );
@@ -441,6 +469,7 @@ function stop(code=0){
 
   closing=true;
   ready=false;
+  stopSystemdSupervision();
 
   clearTimeout(reconnect);
   socket?.terminate();
@@ -543,6 +572,14 @@ for(let i=0;i<100&&!closing;i++){
 if(!localReady||closing){
   stop(1);
 }else{
+  stopSystemdSupervision=await startSystemdSupervision({
+    port,
+    onUnhealthy:reason=>{
+      logEvent('ERROR','local_health_failed',{reason});
+      stop(1);
+    },
+    log:message=>logEvent('WARN','local_health_probe',{message})
+  });
   let attempt=0;
 
   await writeConnectionFile();
@@ -572,7 +609,8 @@ if(!localReady||closing){
     socket=ws;
 
     const assemblies=new Map<string,Assembly>();
-    const activeRequests=new Set<string>();
+    const activeRequests=new Map<string,AbortController>();
+    const preCancelled=new Set<string>();
     let pong=Date.now();
 
     const heartbeat=setInterval(()=>{
@@ -631,6 +669,16 @@ if(!localReady||closing){
           control=JSON.parse(message);
         }catch{}
 
+        // Cancellation commands originate from the authenticated Worker
+        // connection, never from model-controlled MCP tool arguments.
+        if(control?.type==='cancel'){
+          const id=typeof control.requestId==='string'?control.requestId:'';
+          const request=activeRequests.get(id);
+          if(request)request.abort();
+          else if(id)preCancelled.add(id);
+          return;
+        }
+
         if(control?.type==='control'){
           const requestId=
             typeof control.requestId==='string'
@@ -664,22 +712,42 @@ if(!localReady||closing){
             return;
           }
 
-          if(command!=='remote_unlock'){
+          if(command!=='remote_unlock'&&command!=='remote_lock'){
             sendControlResult(false,{error:'Unsupported control command'});
             return;
           }
 
           if(!settings?.zoneId){
             sendControlResult(false,{
-              error:'Remote unlock is available only for Zone members'
+              error:'Remote control is available only for Zone members'
             });
             return;
           }
 
           if(requestedZoneId!==settings.zoneId){
             sendControlResult(false,{
-              error:'Remote unlock Zone does not match this device membership'
+              error:'Remote control Zone does not match this device membership'
             });
+            return;
+          }
+
+          if(command==='remote_lock'){
+            // Remote Lock ends only the global unlock. Approved sessions retain
+            // their individual scoped authorization and are not revoked here.
+            const disabled=await disableAlwaysUnlocked('zone_remote_lock');
+            await lockLocal('zone_remote_lock');
+            if(disabled){
+              // The HTTP child caches config, so reload after clearing an
+              // Always Unlocked preference to enforce the updated policy.
+              reloading??=reloadLocal().finally(()=>{reloading=undefined;});
+              await reloading;
+            }
+            await auditSecurity('remote_lock_applied',{
+              actor:'relay_admin',
+              zoneId:settings.zoneId,
+              deviceId:settings.deviceId
+            });
+            sendControlResult(true,{locked:true,source:null});
             return;
           }
 
@@ -695,7 +763,7 @@ if(!localReady||closing){
             minutes,
             {
               source:'remote',
-              maxSessionMinutes:60
+              maxSessionMinutes:minutes
             }
           );
           await auditSecurity('remote_unlock_applied',{
@@ -739,6 +807,7 @@ if(!localReady||closing){
         const data=complete.value as {
           body:string;
           protocolVersion?:string;
+          sessionApproved?:boolean;
         };
 
         if(
@@ -750,13 +819,20 @@ if(!localReady||closing){
         }
 
         JSON.parse(data.body);
-        activeRequests.add(frame.id);
+        if(preCancelled.delete(frame.id)){
+          respond(frame.id,{status:409,body:JSON.stringify({error:'Session work was revoked before it started'})});
+          return;
+        }
+        const controller=new AbortController();
+        activeRequests.set(frame.id,controller);
 
         try{
           const headers:Record<string,string>={
             'Content-Type':'application/json',
             'Accept':'application/json, text/event-stream',
-            Authorization:`Bearer ${localToken}`
+            Authorization:`Bearer ${localToken}`,
+            'x-localmcp-relay-gate':relayGateKey,
+            'x-localmcp-session-approved':data.sessionApproved===true?'1':'0'
           };
 
           if(data.protocolVersion){
@@ -769,7 +845,7 @@ if(!localReady||closing){
               method:'POST',
               headers,
               body:data.body,
-              signal:AbortSignal.timeout(125000)
+              signal:AbortSignal.any([controller.signal,AbortSignal.timeout(125000)])
             }
           );
 
@@ -824,6 +900,8 @@ if(!localReady||closing){
     });
 
     ws.on('close',(code,reason)=>{
+      for(const controller of activeRequests.values())controller.abort();
+      preCancelled.clear();
       ready=false;
       clearInterval(heartbeat);
       const closeReason=reason.length?reason.toString():undefined;

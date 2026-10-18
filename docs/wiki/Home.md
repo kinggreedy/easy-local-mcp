@@ -1,6 +1,6 @@
 # Easy Local MCP Wiki
 
-Easy Local MCP is a secure local MCP bridge that lets ChatGPT use capabilities on your own computer without exposing an inbound port.
+Easy Local MCP is an MCP bridge for operator-prepared hosts, allowing ChatGPT to use their capabilities without exposing an inbound port.
 
 ```mermaid
 flowchart TD
@@ -25,8 +25,8 @@ flowchart TD
 
 ## Project README
 
-- [English README](https://github.com/Ryanma-YX/easy-local-mcp/blob/master/README.md)
-- [简体中文 README](https://github.com/Ryanma-YX/easy-local-mcp/blob/master/README.zh-CN.md)
+- [English README](https://github.com/kinggreedy/easy-local-mcp/blob/master/README.md)
+- [简体中文 README](https://github.com/kinggreedy/easy-local-mcp/blob/master/README.zh-CN.md)
 
 ## Important security note
 

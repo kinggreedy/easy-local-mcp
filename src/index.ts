@@ -10,6 +10,7 @@ import { createServer } from './server.js';
 import { McpLoader } from './mcp/loader.js';
 import { loadSkills } from './skills/loader.js';
 import { ProcessManager } from './process.js';
+import { CommandRunner } from './command.js';
 import { secureWriteFile } from './security.js';
 import { isConcurrentReadRequest } from './relay-protocol.js';
 
@@ -124,6 +125,28 @@ async function autoStartDesktopAgent(){
 
 async function main(){
   const mode=process.argv[2]||'start';
+  // Register the parent-death listener before initialization awaits.
+  // It gains the full cleanup contract once execution managers are ready.
+  let shutdownOwned=async()=>{};
+
+  if(mode==='http'&&process.env.LOCALMCP_INTERNAL==='1'){
+    // An Agent-owned HTTP child must never survive loss of its parent.
+    // Register before startup awaits; handle an already-disconnected IPC too.
+    if(!process.channel){
+      throw new Error('Internal HTTP server requires an Agent IPC channel');
+    }
+    process.once('disconnect',()=>{
+      // Even blocked MCP work must not prevent the old HTTP port being freed.
+      const deadline=setTimeout(()=>process.exit(1),4000);
+      void shutdownOwned()
+        .catch(error=>console.error('Owned process cleanup failed:',error))
+        .finally(()=>{
+          clearTimeout(deadline);
+          process.exit(0);
+        });
+    });
+    if(!process.connected)process.exit(0);
+  }
 
   if(mode==='init'){
     await ensureInitialized(true);
@@ -244,7 +267,17 @@ async function main(){
     }=await import('./lifecycle.js');
 
     if(mode==='status'){
-      printStatus(await status());
+      const current=await status();
+      printStatus(current);
+      const {managedUserServiceState}=await import('./systemd-service.js');
+      const service=await managedUserServiceState();
+      console.log(service
+        ? 'Supervision: systemd user service ('+service.state
+          +', '+(current.status==='running'
+            ? service.active&&service.mainPid===current.pid
+              ? 'verified owner':'OWNERSHIP CONFLICT'
+            : 'no running Agent')+')'
+        : 'Supervision: direct / unmanaged');
       return;
     }
 
@@ -315,6 +348,25 @@ async function main(){
   const mcp=new McpLoader(cfg.mcpServers);
   const skills=await loadSkills(cfg.skillsDir,cfg.enabledSkills);
   const processes=new ProcessManager();
+  const commands=new CommandRunner();
+  const loaders=new Set<McpLoader>([mcp]);
+  let shuttingDown=false;
+  let ownedCleanup:Promise<void>|undefined;
+
+  // One shutdown contract for every process created on behalf of this HTTP
+  // instance. Initiate cancellation synchronously before awaiting any I/O.
+  function cleanupOwned(){
+    if(ownedCleanup)return ownedCleanup;
+    shuttingDown=true;
+    const tasks=[
+      commands.close(),
+      processes.close(),
+      ...[...loaders].map(loader=>loader.close({force:true}))
+    ];
+    ownedCleanup=Promise.allSettled(tasks).then(()=>{});
+    return ownedCleanup;
+  }
+  shutdownOwned=cleanupOwned;
 
   let runtime={
     config:cfg,
@@ -327,6 +379,7 @@ async function main(){
   const closeWatcher=watchConfig(
     configFilePath(),
     async content=>{
+      if(shuttingDown)return;
       const nextConfig=await config({
         content,
         path:configFilePath()
@@ -340,6 +393,7 @@ async function main(){
         nextConfig.skillsDir,
         nextConfig.enabledSkills
       );
+      if(shuttingDown)return;
 
       const changedMcp=
         JSON.stringify(nextConfig.mcpServers)
@@ -348,6 +402,7 @@ async function main(){
       const nextMcp=changedMcp
         ? new McpLoader(nextConfig.mcpServers)
         : runtime.mcp;
+      loaders.add(nextMcp);
 
       const previous=runtime;
 
@@ -360,7 +415,10 @@ async function main(){
       if(changedMcp){
         const closing=previous.mcp
           .close()
-          .finally(()=>retired.delete(closing));
+          .finally(()=>{
+            retired.delete(closing);
+            loaders.delete(previous.mcp);
+          });
 
         retired.add(closing);
       }
@@ -381,7 +439,8 @@ async function main(){
       mcp,
       skills,
       processes,
-      ()=>runtime
+      ()=>runtime,
+      commands
     );
 
     await server.connect(new StdioServerTransport());
@@ -390,6 +449,10 @@ async function main(){
     const app=express();
 
     app.disable('x-powered-by');
+    app.use((_req,res,next)=>{
+      if(shuttingDown){res.sendStatus(503);return;}
+      next();
+    });
 
     app.get('/healthz',(_req,res)=>{
       res.json({ok:true});
@@ -429,22 +492,50 @@ async function main(){
     let mutationGate=Promise.resolve();
 
     app.post(['/mcp','/mcp/:token'],async(req,res)=>{
-      let release=()=>{};
-
-      if(!requestCanRunDuringMutation(req.body)){
-        const previous=mutationGate;
-
-        mutationGate=new Promise<void>(resolveGate=>{
-          release=resolveGate;
-        });
-
-        await previous;
+      // Only the Agent parent can mark a Worker-validated Session as approved.
+      // The bearer for local HTTP access is a DIFFERENT secret from this key.
+      const gateKey=process.env.LOCALMCP_RELAY_GATE_KEY;
+      let remote:undefined|{approved:boolean};
+      if(gateKey){
+        const provided=typeof req.headers['x-localmcp-relay-gate']==='string'
+          ?req.headers['x-localmcp-relay-gate']:'';
+        // Local clients that already hold the Agent's private loopback token
+        // keep the preexisting OS-user authorization path. Only the Agent
+        // parent sets this separate, secret, relay-origin marker.
+        if(provided){
+          const expected=Buffer.from(gateKey);
+          const supplied=Buffer.from(provided);
+          if(supplied.length!==expected.length||!timingSafeEqual(supplied,expected)){
+            res.sendStatus(403);
+            return;
+          }
+          remote={approved:req.headers['x-localmcp-session-approved']==='1'};
+        }
       }
-
+      // Track disconnects BEFORE waiting in the mutation queue. Otherwise
+      // Revoke can close a queued request while nobody is listening, and its
+      // tool could still execute after an earlier mutation releases the gate.
+      const abortRequest=new AbortController();
+      const onResponseClose=()=>{if(!res.writableEnded)abortRequest.abort();};
+      res.once('close',onResponseClose);
+      if(res.destroyed&&!res.writableEnded)abortRequest.abort();
+      let release=()=>{};
       let server:Awaited<ReturnType<typeof createServer>>|undefined;
       let transport:StreamableHTTPServerTransport|undefined;
 
       try{
+        if(!requestCanRunDuringMutation(req.body)){
+          const previous=mutationGate;
+
+          mutationGate=new Promise<void>(resolveGate=>{
+            release=resolveGate;
+          });
+
+          await previous;
+        }
+
+        // A queued request may have disconnected during `await previous`.
+        if(abortRequest.signal.aborted)throw new Error('Request cancelled');
         const active=runtime;
 
         server=await createServer(
@@ -452,7 +543,10 @@ async function main(){
           active.mcp,
           active.skills,
           processes,
-          ()=>runtime
+          ()=>runtime,
+          commands,
+          remote,
+          abortRequest.signal
         );
 
         transport=new StreamableHTTPServerTransport({
@@ -463,15 +557,24 @@ async function main(){
         await server.connect(transport);
         await transport.handleRequest(req,res,req.body);
       }catch{
-        if(!res.headersSent){
+        if(!res.headersSent&&!res.destroyed){
           res.status(500).json({
             error:'MCP request failed'
           });
         }
       }finally{
-        await transport?.close();
-        await server?.close();
-        release();
+        res.removeListener('close',onResponseClose);
+        try{
+          await transport?.close();
+        }finally{
+          try{
+            await server?.close();
+          }finally{
+            // Even a disconnect or failed transport cleanup must not strand
+            // later mutations behind this queue position.
+            release();
+          }
+        }
       }
     });
 
@@ -504,22 +607,30 @@ async function main(){
     );
   }
 
+  let stopping=false;
   const stop=async()=>{
-    await closeWatcher();
-
-    for(const fn of shutdown){
-      await fn();
+    if(stopping)return;
+    stopping=true;
+    // Do not wait for an in-flight MCP request before cancelling its process.
+    const deadline=setTimeout(()=>process.exit(1),4000);
+    const owned=cleanupOwned();
+    try{
+      await Promise.allSettled([
+        owned,
+        closeWatcher(),
+        ...shutdown.map(fn=>fn())
+      ]);
+      await Promise.allSettled([...retired]);
+      clearTimeout(deadline);
+      process.exit(0);
+    }catch(error){
+      console.error('HTTP shutdown failed:',error);
+      process.exit(1);
     }
-
-    await processes.close();
-    await runtime.mcp.close();
-    await Promise.allSettled([...retired]);
-
-    process.exit(0);
   };
 
-  process.once('SIGINT',stop);
-  process.once('SIGTERM',stop);
+  process.once('SIGINT',()=>{void stop();});
+  process.once('SIGTERM',()=>{void stop();});
 }
 
 main().catch(error=>{
