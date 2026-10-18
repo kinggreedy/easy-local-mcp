@@ -50,7 +50,7 @@ Easy Local MCP 基于 [daodao97/localmcp](https://github.com/daodao97/localmcp) 
 
 ### Windows
 
-从 [GitHub Releases](https://github.com/Ryanma-YX/easy-local-mcp/releases/latest) 下载最新的 Windows x64 安装包。
+从 [GitHub Releases](https://github.com/kinggreedy/easy-local-mcp/releases/latest) 下载最新的 Windows x64 安装包。
 
 桌面安装包已经包含运行所需环境，目标电脑不需要另外安装 Node.js 或 Rust。
 
@@ -63,7 +63,7 @@ Easy Local MCP 基于 [daodao97/localmcp](https://github.com/daodao97/localmcp) 
 - 构建 Windows 安装包需要 Visual Studio 2022 / MSVC 与 Windows SDK
 
 ```powershell
-git clone https://github.com/Ryanma-YX/easy-local-mcp.git
+git clone https://github.com/kinggreedy/easy-local-mcp.git
 cd easy-local-mcp
 npm ci
 npm run desktop:bundle
@@ -98,7 +98,7 @@ LOCKED 时：
 
 只有在本机明确 Unlock 后，特权操作才真正可执行；Unlock 到期或重新 Lock 后会立即恢复拦截。
 
-完整安全说明请阅读 [SECURITY.md](SECURITY.md) 和 [Wiki：安全模型](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Security-Model)。
+完整安全说明请阅读 [SECURITY.md](SECURITY.md) 和 [Wiki：安全模型](https://github.com/kinggreedy/easy-local-mcp/wiki/Security-Model)。
 
 ## 常用命令
 
@@ -122,17 +122,17 @@ easy-local-mcp stop
 
 如果准备长期使用，或者会接触公司源码、ERP / MES 数据、内部文件、凭证与生产环境，更建议把 Relay 部署在自己可控的环境中，例如具备可访问 HTTPS 入口的本机/内网主机、自己的 VPS，或自己的 Cloudflare Worker。
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Ryanma-YX/easy-local-mcp)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/kinggreedy/easy-local-mcp)
 
 部署完成后，把自己的 Relay / Worker URL 填入 Easy Local MCP 即可。
 
-Registration Token、注册保护和部署细节请阅读 [Wiki：自建 Relay](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Self-hosted-Relay)。
+Registration Token、注册保护和部署细节请阅读 [Wiki：自建 Relay](https://github.com/kinggreedy/easy-local-mcp/wiki/Self-hosted-Relay)。
 
 ## 多设备 Zone
 
 支持 Zone 的 Relay 可以把多台设备归入同一个管理区。`/admin` 管理后台现在由独立的 `RELAY_ADMIN_TOKEN_HASH` 保护；未配置时会直接 fail closed，不提供任何管理操作。Relay Admin 登录后可以创建/导入 Zone、生成一次性 Join Code、查看设备在线状态、轮换统一 Connector、重命名设备或撤销设备。设备必须先停止 Easy Local MCP，然后执行 `localmcp join <zone-code>`，再正常启动即可完成加入。
 
-Zone 现在也提供一个统一的 MCP Connector URL。ChatGPT 只需要连接这个 Zone URL，即可先调用 `list_devices`，然后在正常 LocalMCP 工具中通过必填的 `device` 参数选择目标设备。原有每台设备独立的 MCP URL 仍然保留兼容性，而且目标 Agent 仍会执行本机 LOCK 和功能权限检查。早期版本已经创建的 Zone 无需重建，只要在 `/admin` 中点击 **Rotate Connector** 即可生成统一 Connector URL。详见 [Wiki：Multi-Device Zones](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Multi-Device-Zones)。
+Zone 现在也提供一个统一的 MCP Connector URL。ChatGPT 只需要连接这个 Zone URL，即可先调用 `list_devices`，然后在正常 LocalMCP 工具中通过必填的 `device` 参数选择目标设备。原有每台设备独立的 MCP URL 仍然保留兼容性，而且目标 Agent 仍会执行本机 LOCK 和功能权限检查。早期版本已经创建的 Zone 无需重建，只要在 `/admin` 中点击 **Rotate Connector** 即可生成统一 Connector URL。详见 [Wiki：Multi-Device Zones](https://github.com/kinggreedy/easy-local-mcp/wiki/Multi-Device-Zones)。
 
 ## 开发
 
@@ -151,13 +151,13 @@ npm run tray:build
 npm run desktop:bundle
 ```
 
-更多使用、配置和排错内容放在 [项目 Wiki](https://github.com/Ryanma-YX/easy-local-mcp/wiki)。
+更多使用、配置和排错内容放在 [项目 Wiki](https://github.com/kinggreedy/easy-local-mcp/wiki)。
 
 ## 项目来源
 
-Easy Local MCP 基于 [daodao97/localmcp](https://github.com/daodao97/localmcp) 演进，感谢原作者提供 Local MCP 与 Relay 的基础实现。
+本项目是 [Ryanma-YX/easy-local-mcp](https://github.com/Ryanma-YX/easy-local-mcp) 的独立分支，后者基于 [daodao97/localmcp](https://github.com/daodao97/localmcp)。感谢两个上游项目及其贡献者。
 
-本项目目前独立维护，不再以合并回上游为目标。
+本分支采用独立的设计理念、威胁模型和贡献政策。目前预计较少向上游提交 PR：我们理解其审查流程要求充分的人工代码审查，而当前工作方式难以满足；若上游明确接受 AI 审查的贡献，我们愿意重新考虑。
 
 ## License
 

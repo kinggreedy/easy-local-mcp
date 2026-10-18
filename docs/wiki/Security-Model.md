@@ -90,4 +90,4 @@ For regular or long-term use—and especially for company source code, ERP/MES d
 
 The repository-level security document remains the authoritative detailed reference:
 
-https://github.com/Ryanma-YX/easy-local-mcp/blob/master/SECURITY.md
+https://github.com/kinggreedy/easy-local-mcp/blob/master/SECURITY.md

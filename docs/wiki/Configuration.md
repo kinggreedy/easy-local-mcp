@@ -36,7 +36,7 @@ A minimal example:
 
 The full example is available in:
 
-https://github.com/Ryanma-YX/easy-local-mcp/blob/master/localmcp.example.json
+https://github.com/kinggreedy/easy-local-mcp/blob/master/localmcp.example.json
 
 ## Workspaces
 

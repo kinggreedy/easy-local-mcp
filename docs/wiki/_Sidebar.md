@@ -11,6 +11,6 @@
 
 ---
 
-- [Repository](https://github.com/Ryanma-YX/easy-local-mcp)
-- [English README](https://github.com/Ryanma-YX/easy-local-mcp/blob/master/README.md)
-- [简体中文 README](https://github.com/Ryanma-YX/easy-local-mcp/blob/master/README.zh-CN.md)
+- [Repository](https://github.com/kinggreedy/easy-local-mcp)
+- [English README](https://github.com/kinggreedy/easy-local-mcp/blob/master/README.md)
+- [简体中文 README](https://github.com/kinggreedy/easy-local-mcp/blob/master/README.zh-CN.md)

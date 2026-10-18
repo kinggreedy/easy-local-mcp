@@ -39,7 +39,7 @@ Operators are responsible for isolation, backups, and protecting sensitive data.
 
 It is **not a fine-grained command authorization system or a security sandbox**.
 
-For different approaches involving more granular tool controls and permissions, consider [Bridge MCP](https://github.com/muchiny/bridge-mcp), [Desktop Commander MCP](https://github.com/wonderwhy-er/DesktopCommanderMCP), and [Conduit Desktop](https://github.com/advenimus/conduit-desktop). Their security models and guarantees differ.
+If you need finer-grained tool permissions or a different security model, alternatives worth evaluating include [Bridge MCP](https://github.com/muchiny/bridge-mcp), [Desktop Commander MCP](https://github.com/wonderwhy-er/DesktopCommanderMCP), and [Conduit Desktop](https://github.com/advenimus/conduit-desktop). These are examples, not an exhaustive list; assess their safeguards against your own requirements.
 
 ## Project Origin
 
@@ -70,7 +70,7 @@ For the foreseeable future, however, upstream contributions are unlikely. We und
 
 ### Windows
 
-Download the latest Windows x64 installer from [GitHub Releases](https://github.com/Ryanma-YX/easy-local-mcp/releases/latest).
+Download the latest Windows x64 installer from [GitHub Releases](https://github.com/kinggreedy/easy-local-mcp/releases/latest).
 
 The desktop installer includes the required runtime. The target PC does not need Node.js or Rust.
 
@@ -83,7 +83,7 @@ Requirements:
 - Visual Studio 2022 / MSVC and Windows SDK for the Windows installer
 
 ```powershell
-git clone https://github.com/Ryanma-YX/easy-local-mcp.git
+git clone https://github.com/kinggreedy/easy-local-mcp.git
 cd easy-local-mcp
 npm ci
 npm run desktop:bundle
@@ -120,7 +120,7 @@ While LOCKED:
 
 Privileged operations become callable only after a local Unlock and are blocked again when the Unlock expires or the Agent is locked.
 
-For the full security model, see [SECURITY.md](SECURITY.md) and the [Security Model wiki page](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Security-Model).
+For the full security model, see [SECURITY.md](SECURITY.md) and the [Security Model wiki page](https://github.com/kinggreedy/easy-local-mcp/wiki/Security-Model).
 
 ## Common commands
 
@@ -144,17 +144,17 @@ The prefilled public Relay is currently provided as an upstream/community shared
 
 For regular use, company source code, ERP/MES data, internal files, credentials, or production environments, a Relay under your own control is recommended. You can host it on a machine you manage (with a reachable HTTPS endpoint), on your own VPS, or on your own Cloudflare Worker.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Ryanma-YX/easy-local-mcp)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/kinggreedy/easy-local-mcp)
 
 After deployment, copy the Relay or Worker URL and configure it in Easy Local MCP.
 
-See [Self-hosted Relay](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Self-hosted-Relay) for deployment and registration-protection details.
+See [Self-hosted Relay](https://github.com/kinggreedy/easy-local-mcp/wiki/Self-hosted-Relay) for deployment and registration-protection details.
 
 ## Multi-Device Zones
 
 A Relay can group several devices into a Zone. The `/admin` dashboard is protected by a dedicated `RELAY_ADMIN_TOKEN_HASH`; without that configuration it fails closed and exposes no management actions. After Relay Admin login, you can create/import Zones, generate one-time join codes, view device status, rotate the shared connector, rename devices, or revoke them. On a stopped device, stage the join with `localmcp join <zone-code>`, then start Easy Local MCP normally.
 
-A Zone also exposes one shared MCP connector URL. ChatGPT can connect to that URL once, call `list_devices`, and route the normal LocalMCP tools by adding a required `device` argument. Per-device MCP URLs continue to work for compatibility, and the target Agent still enforces its own local LOCK and feature permissions. Existing Zones created by an earlier Zone build can enable the shared connector by choosing **Rotate Connector** in `/admin`. See [Multi-Device Zones](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Multi-Device-Zones).
+A Zone also exposes one shared MCP connector URL. ChatGPT can connect to that URL once, call `list_devices`, and route the normal LocalMCP tools by adding a required `device` argument. Per-device MCP URLs continue to work for compatibility, and the target Agent still enforces its own local LOCK and feature permissions. Existing Zones created by an earlier Zone build can enable the shared connector by choosing **Rotate Connector** in `/admin`. See [Multi-Device Zones](https://github.com/kinggreedy/easy-local-mcp/wiki/Multi-Device-Zones).
 
 ## Development
 
@@ -173,7 +173,7 @@ npm run tray:build
 npm run desktop:bundle
 ```
 
-More documentation is available in the [project Wiki](https://github.com/Ryanma-YX/easy-local-mcp/wiki).
+More documentation is available in the [project Wiki](https://github.com/kinggreedy/easy-local-mcp/wiki).
 
 ## Contributing
 

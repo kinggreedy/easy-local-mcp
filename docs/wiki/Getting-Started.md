@@ -6,7 +6,7 @@
 
 Download the latest Windows x64 installer from:
 
-https://github.com/Ryanma-YX/easy-local-mcp/releases/latest
+https://github.com/kinggreedy/easy-local-mcp/releases/latest
 
 The installer bundles the runtime required by Easy Local MCP. The target machine does not need Node.js or Rust.
 
@@ -19,7 +19,7 @@ Requirements:
 - Visual Studio 2022 / MSVC and Windows SDK for the Windows installer
 
 ```powershell
-git clone https://github.com/Ryanma-YX/easy-local-mcp.git
+git clone https://github.com/kinggreedy/easy-local-mcp.git
 cd easy-local-mcp
 npm ci
 npm run desktop:bundle
