@@ -3,6 +3,8 @@ import { OwnedStdioClientTransport } from './owned-stdio-transport.js';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
+import {AGENT_VERSION} from '../version.js';
+
 // Forced shutdown must not wait indefinitely for SDK connection promises
 // whose launcher has already exited but whose stdio descendants were alive.
 function settledWithin(operations:Promise<unknown>[],timeoutMs:number):Promise<void>{
@@ -37,7 +39,7 @@ export class McpLoader {
     const inFlight=this.starting.get(name);if(inFlight)return inFlight;
     const cfg=this.servers[name];if(!cfg)throw new Error(`Unknown MCP server '${name}'`);
     const operation=(async()=>{
-      const client=new Client({name:`easy-local-mcp-${name}`,version:'0.4.0'});
+      const client=new Client({name:`easy-local-mcp-${name}`,version:AGENT_VERSION});
       const transport=new OwnedStdioClientTransport({command:cfg.command,args:cfg.args||[],env:cfg.env,stderr:'inherit'});
       this.clients.add(client);
       this.transports.add(transport);

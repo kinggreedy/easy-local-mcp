@@ -11,6 +11,7 @@ import {
 import { handleZoneMcp } from './zone-mcp';
 import { agentSessionTools, withSessionArgument, handleAgentSessionTool, authorizedAgentSessionId, SESSION_TOKEN_ARGUMENT } from './agent-sessions';
 import { homePage } from './home';
+import {readDeviceStatus,reportedAgentVersion} from './device-version';
 export { RelayAdmin } from './relay-admin';
 export { ZoneManager } from './zone';
 import {
@@ -281,26 +282,11 @@ async function zoneInfo(
 
   const devices=await Promise.all(
     info.devices.map(async device=>{
-      const status=await relay(env,device.deviceId).fetch(
-        new Request(
-          'https://relay.internal/status',
-          {
-            headers:{
-              'x-localmcp-internal':'1'
-            }
-          }
-        )
-      );
-
-      let online=false;
-      if(status.ok){
-        const data=await status.json() as {online?:boolean};
-        online=data.online===true;
-      }
-
+      const status=await readDeviceStatus(env.RELAY,device.deviceId);
       return {
         ...device,
-        online
+        ...(status.version?{version:status.version}:{}),
+        online:status.online
       };
     })
   );
@@ -953,26 +939,11 @@ export default {
 
       const devices=await Promise.all(
         info.devices.map(async device=>{
-          const status=await relay(env,device.deviceId).fetch(
-            new Request(
-              'https://relay.internal/status',
-              {
-                headers:{
-                  'x-localmcp-internal':'1'
-                }
-              }
-            )
-          );
-
-          let online=false;
-          if(status.ok){
-            const data=await status.json() as {online?:boolean};
-            online=data.online===true;
-          }
-
+          const status=await readDeviceStatus(env.RELAY,device.deviceId);
           return {
             ...device,
-            online
+            ...(status.version?{version:status.version}:{}),
+            online:status.online
           };
         })
       );
@@ -1456,7 +1427,8 @@ export default {
           {
             headers:{
               Upgrade:'websocket',
-              'x-localmcp-agent-token':bearer(request)
+              'x-localmcp-agent-token':bearer(request),
+              'x-localmcp-agent-version':request.headers.get('x-localmcp-agent-version')||''
             }
           }
         )
@@ -1631,8 +1603,12 @@ export class McpRelay {
       url.pathname==='/status'
       && request.headers.get('x-localmcp-internal')==='1'
     ){
+      const version=reportedAgentVersion(
+        await this.ctx.storage.get<string>('reportedAgentVersion')
+      );
       return json({
-        online:this.ctx.getWebSockets('agent').length>0
+        online:this.ctx.getWebSockets('agent').length>0,
+        ...(version?{version}:{})
       });
     }
 
@@ -1752,7 +1728,7 @@ export class McpRelay {
       && request.method==='POST'
       && request.headers.get('x-localmcp-internal')==='1'
     ){
-      await this.ctx.storage.delete(['agentHash','mcpHash']);
+      await this.ctx.storage.delete(['agentHash','mcpHash','reportedAgentVersion']);
 
       for(const socket of this.ctx.getWebSockets('agent')){
         this.failSocket(socket);
@@ -1781,6 +1757,7 @@ export class McpRelay {
         agentHash,
         mcpHash
       });
+      await this.ctx.storage.delete('reportedAgentVersion');
 
       return json({ok:true});
     }
@@ -1834,6 +1811,17 @@ export class McpRelay {
           )
         ){
           return new Response(null,{status:404});
+        }
+
+        // Version labels are authenticated metadata, not an allowlist.
+        // Old Agents with no version header remain compatible.
+        const version=reportedAgentVersion(
+          request.headers.get('x-localmcp-agent-version')
+        );
+        if(version){
+          await this.ctx.storage.put('reportedAgentVersion',version);
+        }else{
+          await this.ctx.storage.delete('reportedAgentVersion');
         }
       }
 

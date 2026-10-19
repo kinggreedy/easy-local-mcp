@@ -2,6 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema,ListToolsRequestSchema,type Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { Config } from './config.js';
+import {AGENT_VERSION} from './version.js';
 import { Workspace } from './workspace.js';
 import { CommandRunner } from './command.js';
 import { ProcessManager } from './process.js';
@@ -49,7 +50,7 @@ const descriptions:Partial<Record<N,string>>={
 };
 
 export async function createServer(config:Config,mcp:McpLoader,skills:Skill[],processes=new ProcessManager(),getRuntime=()=>({config,mcp,skills}),commands=new CommandRunner(),remote?:RemoteMcpApproval,requestSignal?:AbortSignal){
-  const server=new Server({name:'easy-local-mcp',version:'0.4.0'},{capabilities:{tools:{}}});
+  const server=new Server({name:'easy-local-mcp',version:AGENT_VERSION},{capabilities:{tools:{}}});
 
   const definitions=async(current:Config):Promise<Tool[]>=>{
     const tools:Tool[]=[];
