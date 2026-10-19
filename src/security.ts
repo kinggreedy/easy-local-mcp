@@ -235,7 +235,9 @@ export async function unlockLocal(
   const until=now+minutes*60_000;
   const hardUntil=now+maxSessionMinutes*60_000;
 
-  await secureWriteFile(
+  // Readers treat incomplete JSON as a revoked unlock, so never update this
+  // shared lease in place. Swap in a fully written file instead.
+  await secureWriteFileAtomic(
     unlockFile,
     JSON.stringify({
       version:2,
@@ -293,7 +295,7 @@ export async function renewUnlockLease(
     return getUnlockStatus(false);
   }
 
-  await secureWriteFile(
+  await secureWriteFileAtomic(
     unlockFile,
     JSON.stringify({
       version:2,
